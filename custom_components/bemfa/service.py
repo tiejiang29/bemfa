@@ -5,9 +5,8 @@ import logging
 
 from homeassistant.const import EVENT_HOMEASSISTANT_STARTED
 from homeassistant.core import CoreState, Event, HomeAssistant
-from homeassistant.helpers import persistent_notification
 from .sync import SYNC_TYPES, Sync
-from .const import OPTIONS_NAME, TOPIC_PREFIX, TOPIC_PING
+from .const import OPTIONS_NAME, TOPIC_PING
 from .http import BemfaHttp
 from .mqtt import BemfaMqtt
 
@@ -103,9 +102,12 @@ class BemfaService:
 
         if not orphans:
             # Dismiss any previous orphan notification since there are none now
-            persistent_notification.async_dismiss(
-                self._hass, notification_id="bemfa_orphan_topics"
-            )
+            try:
+                self._hass.components.persistent_notification.async_dismiss(
+                    notification_id="bemfa_orphan_topics"
+                )
+            except AttributeError:
+                pass
             return
 
         _LOGGING.warning(
@@ -119,15 +121,21 @@ class BemfaService:
             orphan_lines.append(f"- `{topic}` ({name})")
         orphan_list = "\n".join(orphan_lines)
 
-        persistent_notification.async_create(
-            self._hass,
-            f"巴法云上有 **{len(orphans)}** 个孤儿 Topic 未关联任何 HA 实体：\n\n"
-            f"{orphan_list}\n\n"
-            f"这些 Topic 可能是实体被删除、重命名或域名变更后遗留的。"
-            f"请前往 **设置 → 集成 → Bemfa → 选项 → 删除同步** 进行清理。",
-            title="Bemfa 孤儿 Topic 检测",
-            notification_id="bemfa_orphan_topics",
-        )
+        try:
+            self._hass.components.persistent_notification.async_create(
+                f"巴法云上有 **{len(orphans)}** 个孤儿 Topic 未关联任何 HA 实体：\n\n"
+                f"{orphan_list}\n\n"
+                f"这些 Topic 可能是实体被删除、重命名或域名变更后遗留的。"
+                f"请前往 **设置 → 集成 → Bemfa → 选项 → 删除同步** 进行清理。",
+                title="Bemfa 孤儿 Topic 检测",
+                notification_id="bemfa_orphan_topics",
+            )
+        except AttributeError:
+            _LOGGING.error(
+                "Persistent notification component not available, "
+                "cannot notify about %d orphan topics",
+                len(orphans),
+            )
 
     async def async_create_sync(self, sync: Sync, user_input: dict[str, str]):
         """Create a topic to bemfa service and keep communication by mqtt.
