@@ -76,8 +76,8 @@ class Light(ControllableSync):
                     {
                         ATTR_BRIGHTNESS_PCT: msg[1],
                         ATTR_COLOR_TEMP_KELVIN: min(
-                            max(1000000 // msg[2], attributes[ATTR_MAX_COLOR_TEMP_KELVIN]),
-                            attributes[ATTR_MIN_COLOR_TEMP_KELVIN],
+                            max(1000000 // msg[2], attributes[ATTR_MIN_COLOR_TEMP_KELVIN]),
+                            attributes[ATTR_MAX_COLOR_TEMP_KELVIN],
                         ),
                     }
                     if len(msg) > 2

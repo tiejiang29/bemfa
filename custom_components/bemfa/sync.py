@@ -190,8 +190,10 @@ class ControllableSync(Sync):
                     state.attributes,
                 )
                 data.update({ATTR_ENTITY_ID: self._entity_id})
-                self._hass.services.call(
-                    domain=domain, service=service, service_data=data
+                self._hass.async_create_task(
+                    self._hass.services.async_call(
+                        domain=domain, service=service, service_data=data
+                    )
                 )
                 break  # call only one service at most on each msg received
 

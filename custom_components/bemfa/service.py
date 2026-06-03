@@ -33,8 +33,8 @@ class BemfaService:
             # This topic does not matter to entities, remove it for following steps
             del all_topics[TOPIC_PING]
 
-        # time to make mqtt connection
-        self._bemfa_mqtt.connect()
+        # time to make mqtt connection (now async to avoid blocking)
+        await self._bemfa_mqtt.async_connect()
 
         # When sync an entity to bemfa service,
         # we must make sure this entity's state is available, means this entity has inited.
@@ -95,6 +95,6 @@ class BemfaService:
         await self._bemfa_http.async_del_topic(topic)
         self._bemfa_mqtt.destroy_sync(topic)
 
-    def stop(self) -> None:
+    async def async_stop(self) -> None:
         """Stop the service, called when Bemfa component stops."""
-        self._bemfa_mqtt.disconnect()
+        await self._bemfa_mqtt.async_disconnect()

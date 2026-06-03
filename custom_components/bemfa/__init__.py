@@ -43,7 +43,7 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Unload a config entry."""
     data = hass.data[DOMAIN].get(entry.entry_id)
     if data is not None:
-        data["service"].stop()
+        await data["service"].async_stop()
         hass.data[DOMAIN].pop(entry.entry_id)
 
     return True

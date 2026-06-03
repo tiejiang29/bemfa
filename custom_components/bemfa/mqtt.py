@@ -43,9 +43,9 @@ class BemfaMqtt:
         self._topic_to_sync: dict[str, Sync] = {}
 
         self._remove_listener: Any = None
-        self._ping_publish_timer: Any = None
-        self._ping_receive_timer: Any = None
+        self._ping_task: asyncio.Task | None = None
         self._ping_lost: int = 0
+        self._running: bool = False
 
     def create_sync(self, sync: Sync):
         """Add an topic to our watching list."""
@@ -71,15 +71,20 @@ class BemfaMqtt:
             self._topic_to_sync.pop(topic)
         self._mqttc.unsubscribe(topic)
 
-    def connect(self) -> None:
-        """Connect to Bamfa service."""
-        # Send heartbeat packages to check the connection first in case we failed to make mqtt connection
-        self._ping()
+    async def async_connect(self) -> None:
+        """Connect to Bemfa service asynchronously to avoid blocking the event loop."""
+        self._running = True
 
-        self._mqttc.connect(MQTT_HOST, MQTT_PORT, MQTT_KEEPALIVE)
+        # Run synchronous MQTT connect in executor to avoid blocking HA event loop
+        await asyncio.get_event_loop().run_in_executor(
+            None, self._mqttc.connect, MQTT_HOST, MQTT_PORT, MQTT_KEEPALIVE
+        )
+
         self._mqttc.on_message = self._mqtt_on_message
-
         self._mqttc.loop_start()
+
+        # Start heartbeat as a managed task (replaces recursive _ping)
+        self._ping_task = asyncio.ensure_future(self._ping_loop())
 
         # Listen for state changes
         self._remove_listener = self._hass.bus.async_listen(
@@ -89,44 +94,87 @@ class BemfaMqtt:
         # Listen for heartbeat packages
         self._mqttc.subscribe(TOPIC_PING, 1)
 
-    def _ping(self):
-        async def _receive_job():
-            await asyncio.sleep(INTERVAL_PING_RECEIVE)
-            self._ping_lost += 1
-            if self._ping_lost == MAX_PING_LOST:
-                self._ping_lost = 0
-                self._reconnect()
+        _LOGGING.info("Connected to Bemfa MQTT broker")
 
-        async def _publish_job():
+    async def _ping_loop(self) -> None:
+        """Heartbeat loop using while-loop instead of recursion to prevent task accumulation."""
+        while self._running:
             await asyncio.sleep(INTERVAL_PING_SEND)
+
+            if not self._running:
+                break
+
             self._mqttc.publish(TOPIC_PING, "ping")
-            self._ping_receive_timer = asyncio.ensure_future(_receive_job())
-            self._ping()
 
-        self._ping_publish_timer = asyncio.ensure_future(_publish_job())
+            # Wait for ping response
+            try:
+                await asyncio.wait_for(
+                    self._wait_for_ping_response(),
+                    timeout=INTERVAL_PING_RECEIVE,
+                )
+                # Ping response received, reset counter
+                self._ping_lost = 0
+            except asyncio.TimeoutError:
+                # No ping response within timeout
+                self._ping_lost += 1
+                _LOGGING.warning(
+                    "Bemfa ping lost (%d/%d)", self._ping_lost, MAX_PING_LOST
+                )
+                if self._ping_lost >= MAX_PING_LOST:
+                    _LOGGING.warning("Bemfa MQTT connection lost, reconnecting...")
+                    self._ping_lost = 0
+                    await self._async_reconnect()
 
-    def _reconnect(self):
-        self.disconnect()
-        self.connect()
-        for sync in self._topic_to_sync.values():
-            self.create_sync(sync)
+    async def _wait_for_ping_response(self) -> None:
+        """Wait for a ping response from the MQTT broker."""
+        # This is a simple approach: the _mqtt_on_message callback will
+        # set an event when a ping response is received.
+        self._ping_received = asyncio.Event()
+        await self._ping_received.wait()
 
-    def disconnect(self) -> None:
-        """Disconnect from Bamfa service."""
+    def _notify_ping_received(self) -> None:
+        """Called from _mqtt_on_message when a ping response is received."""
+        if hasattr(self, "_ping_received") and self._ping_received is not None:
+            self._ping_received.set()
 
-        # Remove timers
-        if self._ping_publish_timer is not None:
-            self._ping_publish_timer.cancel()
-        if self._ping_receive_timer is not None:
-            self._ping_receive_timer.cancel()
+    async def _async_reconnect(self) -> None:
+        """Reconnect to Bemfa service asynchronously."""
+        self._stop_internal()
+
+        try:
+            await self.async_connect()
+            # Re-subscribe all existing syncs
+            for sync in list(self._topic_to_sync.values()):
+                self.create_sync(sync)
+            _LOGGING.info("Reconnected and re-subscribed %d syncs", len(self._topic_to_sync))
+        except Exception:  # noqa: BLE001
+            _LOGGING.error("Failed to reconnect to Bemfa MQTT broker")
+
+    def _stop_internal(self) -> None:
+        """Stop internal timers and connections without affecting sync state."""
+        self._running = False
+
+        # Cancel ping task
+        if self._ping_task is not None:
+            self._ping_task.cancel()
+            self._ping_task = None
 
         # Unlisten for state changes
         if self._remove_listener is not None:
             self._remove_listener()
+            self._remove_listener = None
 
-        # Destroy MQTT connection
-        self._mqttc.loop_stop()
-        self._mqttc.disconnect()
+        # Stop MQTT
+        try:
+            self._mqttc.loop_stop()
+            self._mqttc.disconnect()
+        except Exception:  # noqa: BLE001
+            pass
+
+    async def async_disconnect(self) -> None:
+        """Disconnect from Bemfa service asynchronously."""
+        self._stop_internal()
+        _LOGGING.info("Disconnected from Bemfa MQTT broker")
 
     def _state_listener(self, event):
         new_state = event.data.get("new_state")
@@ -142,9 +190,7 @@ class BemfaMqtt:
 
     def _mqtt_on_message(self, _mqtt_client, _userdata, message) -> None:
         if message.topic == TOPIC_PING:
-            if self._ping_receive_timer is not None:
-                self._ping_receive_timer.cancel()
-                self._ping_lost = 0
+            self._notify_ping_received()
             return
 
         if message.topic in self._topic_to_sync:
