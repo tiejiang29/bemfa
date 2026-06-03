@@ -5,8 +5,9 @@ import logging
 
 from homeassistant.const import EVENT_HOMEASSISTANT_STARTED
 from homeassistant.core import CoreState, Event, HomeAssistant
+from homeassistant.helpers import persistent_notification
 from .sync import SYNC_TYPES, Sync
-from .const import OPTIONS_NAME, TOPIC_PING
+from .const import OPTIONS_NAME, TOPIC_PREFIX, TOPIC_PING
 from .http import BemfaHttp
 from .mqtt import BemfaMqtt
 
@@ -40,12 +41,16 @@ class BemfaService:
         # we must make sure this entity's state is available, means this entity has inited.
         # So a check of hass state is necessary.
         def _start(event: Event | None = None):
-            for sync in self.collect_supported_syncs():
+            active_syncs = self.collect_supported_syncs()
+            for sync in active_syncs:
                 if sync.topic in all_topics:
                     sync.name = all_topics[sync.topic]
                     if sync.topic in config:
                         sync.config = config[sync.topic]
                     self._bemfa_mqtt.create_sync(sync)
+
+            # Detect orphan topics: exist on Bemfa cloud but no HA entity matches
+            self._detect_orphan_topics(all_topics, active_syncs, config)
 
         if self._hass.state == CoreState.running:
             _start()
@@ -70,6 +75,59 @@ class BemfaService:
         for sync_type in SYNC_TYPES.values():
             syncs.extend(sync_type.collect_supported_syncs(self._hass))
         return sorted(syncs, key=lambda item: item.entity_id)
+
+    def _detect_orphan_topics(
+        self,
+        all_topics: dict[str, str],
+        active_syncs: list[Sync],
+        config: dict[str, dict[str, str]],
+    ) -> None:
+        """Detect orphan topics on Bemfa cloud that have no matching HA entity.
+
+        An orphan topic is one that:
+        1. Exists on Bemfa cloud (present in all_topics)
+        2. No current HA entity generates a matching topic (not in active_syncs)
+        3. Not stored in user config (not intentionally kept)
+
+        When orphans are found, a persistent notification is created in HA
+        to alert the user to clean them up manually.
+        """
+        # Collect all topics that current HA entities would generate
+        active_topics = {sync.topic for sync in active_syncs}
+
+        # Find orphans: cloud topics with no HA entity and no user config
+        orphans: dict[str, str] = {}
+        for topic, name in all_topics.items():
+            if topic not in active_topics and topic not in config:
+                orphans[topic] = name
+
+        if not orphans:
+            # Dismiss any previous orphan notification since there are none now
+            persistent_notification.async_dismiss(
+                self._hass, notification_id="bemfa_orphan_topics"
+            )
+            return
+
+        _LOGGING.warning(
+            "Detected %d orphan topic(s) on Bemfa cloud with no matching HA entity",
+            len(orphans),
+        )
+
+        # Build notification message with orphan details
+        orphan_lines = []
+        for topic, name in orphans.items():
+            orphan_lines.append(f"- `{topic}` ({name})")
+        orphan_list = "\n".join(orphan_lines)
+
+        persistent_notification.async_create(
+            self._hass,
+            f"巴法云上有 **{len(orphans)}** 个孤儿 Topic 未关联任何 HA 实体：\n\n"
+            f"{orphan_list}\n\n"
+            f"这些 Topic 可能是实体被删除、重命名或域名变更后遗留的。"
+            f"请前往 **设置 → 集成 → Bemfa → 选项 → 删除同步** 进行清理。",
+            title="Bemfa 孤儿 Topic 检测",
+            notification_id="bemfa_orphan_topics",
+        )
 
     async def async_create_sync(self, sync: Sync, user_input: dict[str, str]):
         """Create a topic to bemfa service and keep communication by mqtt.
