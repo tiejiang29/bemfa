@@ -11,6 +11,8 @@ from homeassistant import config_entries
 from homeassistant.core import callback
 from homeassistant.data_entry_flow import FlowResult
 from homeassistant.helpers.selector import (
+    EntitySelector,
+    EntitySelectorConfig,
     SelectOptionDict,
     SelectSelector,
     SelectSelectorConfig,
@@ -28,6 +30,12 @@ from .const import (
 from .service import BemfaService
 
 _LOGGER = logging.getLogger(__name__)
+
+# Domains that Bemfa can sync to
+_SUPPORTED_DOMAINS = [
+    "light", "switch", "cover", "fan",
+    "climate", "sensor", "binary_sensor",
+]
 
 STEP_USER_DATA_SCHEMA = vol.Schema(
     {
@@ -99,6 +107,9 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
     # queue of complex syncs that need individual config after name page
     _pending_syncs: list[Sync]
 
+    # entity IDs that are already synced (for exclusion)
+    _synced_entity_ids: list[str]
+
     def __init__(self, config_entry: config_entries.ConfigEntry) -> None:
         """Initialize options flow."""
         self._entry_id = config_entry.entry_id
@@ -109,6 +120,7 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
         )
         self._pending_syncs = []
         self._selected_syncs = []
+        self._synced_entity_ids = []
 
     async def async_step_init(
         self, user_input: dict[str, Any] | None = None
@@ -126,11 +138,14 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
     async def async_step_create_sync(
         self, user_input: dict[str, Any] | None = None
     ) -> FlowResult:
-        """Create hass-to-bemfa sync(s). Supports multi-select for batch creation.
+        """Create hass-to-bemfa sync(s). Supports multi-select with search.
+
+        Uses EntitySelector which provides a built-in searchable dropdown
+        in HA's frontend — type to filter entities in real-time.
 
         After selecting entities, all entities appear on one page with name
-        inputs. Simple types (light, switch, etc.) are created right after;
-        complex types (climate, sensor) get additional config pages.
+        inputs. Simple types are created right after; complex types get
+        additional config pages.
         """
         if user_input is not None:
             selected_ids = user_input[OPTIONS_SELECT]
@@ -147,9 +162,32 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
                 )
 
             self._is_create = True
-            self._selected_syncs = [
-                self._sync_dict[eid] for eid in selected_ids
-            ]
+
+            # Build Sync objects for selected entities
+            service = self._get_service()
+            all_syncs = service.collect_supported_syncs()
+            sync_by_eid = {s.entity_id: s for s in all_syncs}
+
+            self._selected_syncs = []
+            skipped = []
+            for eid in selected_ids:
+                if eid in sync_by_eid:
+                    self._selected_syncs.append(sync_by_eid[eid])
+                else:
+                    skipped.append(eid)
+
+            if skipped:
+                _LOGGER.warning(
+                    "Skipping entities not supported by Bemfa: %s", skipped
+                )
+
+            if not self._selected_syncs:
+                return self.async_show_form(
+                    step_id="create_sync",
+                    errors={"base": "no_selection"},
+                    data_schema=self._build_create_schema(),
+                    last_step=False,
+                )
 
             # Go to the shared names page
             return await self.async_step_create_sync_names()
@@ -165,10 +203,15 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
         if not bool(self._sync_dict):
             return self.async_show_form(step_id="empty", last_step=False)
 
+        # Compute already-synced entity IDs for exclusion
+        self._synced_entity_ids = [
+            s.entity_id for s in all_syncs if s.topic in all_topics
+        ]
+
         return self.async_show_form(
             step_id="create_sync",
             description_placeholders={
-                "hint": "可多选实体批量添加。选中后将在同一页面设置所有名称，复杂类型还需额外配置参数。"
+                "hint": "可多选实体批量添加，支持搜索。输入关键字实时过滤实体。"
             },
             data_schema=self._build_create_schema(),
             last_step=False,
@@ -177,22 +220,17 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
     def _build_create_schema(self) -> vol.Schema:
         """Build the schema for the create sync selection step.
 
-        Uses vol.Optional instead of vol.Required so that no item is
-        pre-selected by default, preventing accidental operations.
+        Uses EntitySelector which provides HA's native entity picker with
+        built-in real-time search. Excludes entities already synced to
+        Bemfa and filters by supported domains.
         """
         return vol.Schema(
             {
-                vol.Optional(OPTIONS_SELECT, default=[]): SelectSelector(
-                    SelectSelectorConfig(
-                        options=[
-                            SelectOptionDict(
-                                value=sync.entity_id,
-                                label=sync.generate_option_label(),
-                            )
-                            for sync in self._sync_dict.values()
-                        ],
-                        mode=SelectSelectorMode.LIST,
+                vol.Optional(OPTIONS_SELECT, default=[]): EntitySelector(
+                    EntitySelectorConfig(
+                        domain=_SUPPORTED_DOMAINS,
                         multiple=True,
+                        exclude_entities=self._synced_entity_ids,
                     )
                 )
             }
@@ -254,7 +292,6 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
             1 for s in self._selected_syncs
             if len(s.generate_details_schema()) > 1
         )
-        simple_count = len(self._selected_syncs) - complex_count
         hint_parts = [f"为 {len(self._selected_syncs)} 个实体设置名称"]
         if complex_count:
             hint_parts.append(
