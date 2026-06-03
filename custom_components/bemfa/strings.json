@@ -29,6 +29,13 @@
                 "title": "Create sync",
                 "description": "Select an entity to create sync."
             },
+            "create_sync_names": {
+                "title": "Configure names and types",
+                "description": "{hint}",
+                "data": {
+                    "type": "Bemfa device type"
+                }
+            },
             "modify_sync": {
                 "title": "Modify a sync",
                 "description": "Select a sync to edit."

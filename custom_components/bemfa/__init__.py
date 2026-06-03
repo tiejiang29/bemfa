@@ -6,7 +6,7 @@ import logging
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 
-from .const import CONF_UID, DOMAIN, OPTIONS_CONFIG
+from .const import CONF_UID, DOMAIN, OPTIONS_CONFIG, TYPE_OVERRIDES_KEY
 from .mqtt import BemfaMqtt
 from .service import BemfaService
 
@@ -29,7 +29,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     service = BemfaService(hass, entry.data[CONF_UID])
     await service.async_start(
-        entry.options[OPTIONS_CONFIG] if OPTIONS_CONFIG in entry.options else {}
+        entry.options[OPTIONS_CONFIG] if OPTIONS_CONFIG in entry.options else {},
+        entry.options[TYPE_OVERRIDES_KEY] if TYPE_OVERRIDES_KEY in entry.options else None,
     )
 
     hass.data[DOMAIN][entry.entry_id] = {

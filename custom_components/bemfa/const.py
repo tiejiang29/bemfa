@@ -13,6 +13,8 @@ OPTIONS_CONFIG: Final = "config"
 OPTIONS_SELECT: Final = "select"
 
 OPTIONS_NAME: Final = "name"
+OPTIONS_TYPE: Final = "type"
+TYPE_OVERRIDES_KEY: Final = "type_overrides"
 
 OPTIONS_TEMPERATURE: Final = "temperature"
 OPTIONS_HUMIDITY: Final = "humidity"
@@ -42,6 +44,43 @@ class TopicSuffix(StrEnum):
     CLIMATE = "005"
     SWITCH = "006"
     COVER = "009"
+
+
+# Mapping from Bemfa topic suffix to display name (Chinese + English)
+BEMFA_TYPE_MAP: dict[str, str] = {
+    TopicSuffix.LIGHT: "灯 (Light)",
+    TopicSuffix.FAN: "风扇 (Fan)",
+    TopicSuffix.SENSOR: "传感器 (Sensor)",
+    TopicSuffix.CLIMATE: "空调 (Climate)",
+    TopicSuffix.SWITCH: "开关 (Switch)",
+    TopicSuffix.COVER: "窗帘 (Cover)",
+}
+
+# Mapping from HA entity domain to default Bemfa type suffix.
+# Used to determine the default type when adding entities.
+# Domains not listed here default to SWITCH (006).
+DOMAIN_TYPE_MAP: dict[str, str] = {
+    "light": TopicSuffix.LIGHT,
+    "fan": TopicSuffix.FAN,
+    "sensor": TopicSuffix.SENSOR,
+    "binary_sensor": TopicSuffix.SENSOR,
+    "climate": TopicSuffix.CLIMATE,
+    "cover": TopicSuffix.COVER,
+    # All switch-like domains default to SWITCH
+    "switch": TopicSuffix.SWITCH,
+    "script": TopicSuffix.SWITCH,
+    "input_boolean": TopicSuffix.SWITCH,
+    "automation": TopicSuffix.SWITCH,
+    "humidifier": TopicSuffix.SWITCH,
+    "remote": TopicSuffix.SWITCH,
+    "siren": TopicSuffix.SWITCH,
+    "camera": TopicSuffix.SWITCH,
+    "media_player": TopicSuffix.SWITCH,
+    "lock": TopicSuffix.SWITCH,
+    "scene": TopicSuffix.SWITCH,
+    "group": TopicSuffix.SWITCH,
+    "vacuum": TopicSuffix.SWITCH,
+}
 
 
 MQTT_HOST: Final = "bemfa.com"

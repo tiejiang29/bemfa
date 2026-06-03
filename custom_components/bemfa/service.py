@@ -6,7 +6,7 @@ import logging
 from homeassistant.const import EVENT_HOMEASSISTANT_STARTED
 from homeassistant.core import CoreState, Event, HomeAssistant
 from .sync import SYNC_TYPES, Sync
-from .const import OPTIONS_NAME, TOPIC_PING
+from .const import OPTIONS_NAME, TOPIC_PING, TYPE_OVERRIDES_KEY
 from .http import BemfaHttp
 from .mqtt import BemfaMqtt
 
@@ -22,7 +22,11 @@ class BemfaService:
         self._bemfa_http = BemfaHttp(hass, uid)
         self._bemfa_mqtt = BemfaMqtt(hass, uid, None)
 
-    async def async_start(self, config: dict[str, dict[str, str]]) -> None:
+    async def async_start(
+        self,
+        config: dict[str, dict[str, str]],
+        type_overrides: dict[str, str] | None = None,
+    ) -> None:
         """Start the servcie, called when Bemfa component starts."""
         all_topics = await self._bemfa_http.async_fetch_all_topics()
 
@@ -36,11 +40,19 @@ class BemfaService:
         # time to make mqtt connection (now async to avoid blocking)
         await self._bemfa_mqtt.async_connect()
 
+        # Resolve type overrides: entity_id → Bemfa type suffix
+        if type_overrides is None:
+            type_overrides = {}
+
         # When sync an entity to bemfa service,
         # we must make sure this entity's state is available, means this entity has inited.
         # So a check of hass state is necessary.
         def _start(event: Event | None = None):
             active_syncs = self.collect_supported_syncs()
+            # Apply type overrides before topic matching
+            for sync in active_syncs:
+                if sync.entity_id in type_overrides:
+                    sync.topic_suffix = type_overrides[sync.entity_id]
             for sync in active_syncs:
                 if sync.topic in all_topics:
                     sync.name = all_topics[sync.topic]
