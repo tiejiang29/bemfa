@@ -40,6 +40,7 @@ _LOGGER = logging.getLogger(__name__)
 _SUPPORTED_DOMAINS = [
     "light", "switch", "cover", "fan",
     "climate", "sensor", "binary_sensor",
+    "input_boolean", "input_button",
 ]
 
 # Type options list (shared between create and modify)

@@ -8,6 +8,7 @@ from homeassistant.components.camera import DOMAIN as CAMERA_DOMAIN, CameraState
 from homeassistant.components.group import DOMAIN as GROUP_DOMAIN
 from homeassistant.components.humidifier import DOMAIN as HUMIDIFIER_DOMAIN
 from homeassistant.components.input_boolean import DOMAIN as INPUT_BOOLEAN_DOMAIN
+from homeassistant.components.input_button import DOMAIN as INPUT_BUTTON_DOMAIN
 from homeassistant.components.lock import DOMAIN as LOCK_DOMAIN, LockState
 from homeassistant.components.media_player import DOMAIN as MEDIA_PLAYER_DOMAIN
 from homeassistant.components.remote import DOMAIN as REMOTE_DOMAIN
@@ -231,3 +232,26 @@ class Vacuum(Switch):
                 ),
             )
         ]
+
+
+@SYNC_TYPES.register("input_button")
+class InputButton(Switch):
+    """Sync a hass input_button entity to bemfa switch device.
+
+    input_button has no on/off state — it only fires a 'press' event.
+    Like Scene, we always report OFF so that any 'on' command from
+    Bemfa (e.g. via voice assistant) will trigger the press action.
+    """
+
+    @staticmethod
+    def _supported_domain() -> str:
+        return INPUT_BUTTON_DOMAIN
+
+    def _msg_generator(
+        self,
+    ) -> Callable[[str, ReadOnlyDict[Mapping[str, Any]]], str | int]:
+        return lambda state, attributes: MSG_OFF
+
+    def _service_names(self) -> tuple[str, str]:
+        """Press on 'on' command; 'off' is a no-op (state is always OFF)."""
+        return ("press", SERVICE_TURN_OFF)

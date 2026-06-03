@@ -70,6 +70,7 @@ DOMAIN_TYPE_MAP: dict[str, str] = {
     "switch": TopicSuffix.SWITCH,
     "script": TopicSuffix.SWITCH,
     "input_boolean": TopicSuffix.SWITCH,
+    "input_button": TopicSuffix.SWITCH,
     "automation": TopicSuffix.SWITCH,
     "humidifier": TopicSuffix.SWITCH,
     "remote": TopicSuffix.SWITCH,
