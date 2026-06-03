@@ -93,7 +93,10 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
     # current sync we are creating or modify
     _sync: Sync
 
-    # queue of syncs that need individual config after batch selection
+    # all syncs selected for batch creation
+    _selected_syncs: list[Sync]
+
+    # queue of complex syncs that need individual config after name page
     _pending_syncs: list[Sync]
 
     def __init__(self, config_entry: config_entries.ConfigEntry) -> None:
@@ -105,6 +108,7 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
             else {}
         )
         self._pending_syncs = []
+        self._selected_syncs = []
 
     async def async_step_init(
         self, user_input: dict[str, Any] | None = None
@@ -124,8 +128,9 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
     ) -> FlowResult:
         """Create hass-to-bemfa sync(s). Supports multi-select for batch creation.
 
-        After selecting entities, each one gets a config step (including name)
-        so the user can customize the name before creation.
+        After selecting entities, all entities appear on one page with name
+        inputs. Simple types (light, switch, etc.) are created right after;
+        complex types (climate, sensor) get additional config pages.
         """
         if user_input is not None:
             selected_ids = user_input[OPTIONS_SELECT]
@@ -134,7 +139,6 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
                 selected_ids = [selected_ids]
 
             if not selected_ids:
-                # Nothing selected, show the form again
                 return self.async_show_form(
                     step_id="create_sync",
                     errors={"base": "no_selection"},
@@ -142,15 +146,13 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
                     last_step=False,
                 )
 
-            service = self._get_service()
             self._is_create = True
-
-            # Build a queue of all selected syncs — each will get a config step
-            self._pending_syncs = [
+            self._selected_syncs = [
                 self._sync_dict[eid] for eid in selected_ids
             ]
-            self._sync = self._pending_syncs.pop(0)
-            return await self._async_step_sync_config()
+
+            # Go to the shared names page
+            return await self.async_step_create_sync_names()
 
         service = self._get_service()
         all_topics = await service.async_fetch_all_topics()
@@ -166,7 +168,7 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
         return self.async_show_form(
             step_id="create_sync",
             description_placeholders={
-                "hint": "可多选实体批量添加。选中后，每个实体都会弹出配置页面，可以设置名称和参数。"
+                "hint": "可多选实体批量添加。选中后将在同一页面设置所有名称，复杂类型还需额外配置参数。"
             },
             data_schema=self._build_create_schema(),
             last_step=False,
@@ -194,6 +196,75 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
                     )
                 )
             }
+        )
+
+    async def async_step_create_sync_names(
+        self, user_input: dict[str, Any] | None = None
+    ) -> FlowResult:
+        """Set names for all selected entities on one page.
+
+        Each entity gets its own name input field with the HA friendly name
+        as default. After submitting:
+        - Simple types (light, switch, cover, fan, binary_sensor) are
+          created immediately with the specified names.
+        - Complex types (climate, sensor) are queued for individual
+          config pages where they can set extra parameters.
+        """
+        if user_input is not None:
+            service = self._get_service()
+
+            # Apply names from the form and separate simple/complex
+            simple_syncs: list[Sync] = []
+            complex_syncs: list[Sync] = []
+
+            for sync in self._selected_syncs:
+                # Look up the name by key (entity_id with dots→underscores)
+                key = sync.entity_id.replace(".", "_")
+                name = user_input.get(key, sync.name) or sync.name
+                sync.name = name
+
+                # Schema with only OPTIONS_NAME → simple type
+                if len(sync.generate_details_schema()) <= 1:
+                    simple_syncs.append(sync)
+                else:
+                    complex_syncs.append(sync)
+
+            # Batch create simple syncs
+            for sync in simple_syncs:
+                await service.async_create_sync(sync, {OPTIONS_NAME: sync.name})
+                if sync.config:
+                    self._config[sync.topic] = sync.config
+
+            # Handle complex syncs that need individual configuration
+            if complex_syncs:
+                self._pending_syncs = complex_syncs[1:]
+                self._sync = complex_syncs[0]
+                return await self._async_step_sync_config()
+
+            return self.async_create_entry(title="", data={OPTIONS_CONFIG: self._config})
+
+        # Build schema: one name input per entity
+        schema_fields = {}
+        for sync in self._selected_syncs:
+            key = sync.entity_id.replace(".", "_")
+            schema_fields[vol.Optional(key, default=sync.name)] = str
+
+        # Build hint text
+        complex_count = sum(
+            1 for s in self._selected_syncs
+            if len(s.generate_details_schema()) > 1
+        )
+        simple_count = len(self._selected_syncs) - complex_count
+        hint_parts = [f"为 {len(self._selected_syncs)} 个实体设置名称"]
+        if complex_count:
+            hint_parts.append(
+                f"（其中 {complex_count} 个复杂类型还需单独配置参数）"
+            )
+
+        return self.async_show_form(
+            step_id="create_sync_names",
+            data_schema=vol.Schema(schema_fields),
+            description_placeholders={"hint": "".join(hint_parts)},
         )
 
     async def async_step_modify_sync(
