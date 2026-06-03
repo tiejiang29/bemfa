@@ -38,6 +38,7 @@ OPTIONS_SWING_BOTH_VALUE: Final = "swing_both_value"
 class TopicSuffix(StrEnum):
     """Suffix for bemfa MQTT topic"""
 
+    PLUG = "001"
     LIGHT = "002"
     FAN = "003"
     SENSOR = "004"
@@ -48,6 +49,7 @@ class TopicSuffix(StrEnum):
 
 # Mapping from Bemfa topic suffix to display name (Chinese + English)
 BEMFA_TYPE_MAP: dict[str, str] = {
+    TopicSuffix.PLUG: "插座 (Plug)",
     TopicSuffix.LIGHT: "灯 (Light)",
     TopicSuffix.FAN: "风扇 (Fan)",
     TopicSuffix.SENSOR: "传感器 (Sensor)",
