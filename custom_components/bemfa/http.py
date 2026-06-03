@@ -40,12 +40,28 @@ _LOGGING = logging.getLogger(__name__)
 # Bemfa API success codes:
 # - New API (pro.bemfa.com / apis.bemfa.com): code=0
 # - Old API (api.bemfa.com): code=111, status="get ok"/"add ok"/"update ok"/"del ok"
-_API_SUCCESS_CODES = {0, 111}
-_API_SUCCESS_STATUSES = {"get ok", "add ok", "update ok", "del ok"}
+# - Legacy API also returns newer success codes:
+#   5723007 = "added successfullye" (note: typo in Bemfa's response)
+#   5733007 = "delete successfullye"
+#   5743007 = "update successfullye" (rename)
+_API_SUCCESS_CODES = {0, 111, 5723007, 5733007, 5743007}
+_API_SUCCESS_STATUSES = {
+    "get ok", "add ok", "update ok", "del ok",
+    "added successfullye", "delete successfullye", "update successfullye",
+}
 
 
 def _is_api_success(res_dict: dict) -> bool:
-    """Check if Bemfa API response indicates success."""
+    """Check if Bemfa API response indicates success.
+
+    Bemfa's legacy API uses inconsistent success indicators:
+    - Old responses: code=111, status="add ok"/"del ok"
+    - Newer responses: code=5723007/5733007/5743007,
+      status="added successfullye"/"delete successfullye"/"update successfullye"
+    - New JSON API: code=0
+
+    We check both code and status to catch all known success patterns.
+    """
     code = res_dict.get("code")
     status = res_dict.get("status", "")
     return code in _API_SUCCESS_CODES or status in _API_SUCCESS_STATUSES
