@@ -102,12 +102,13 @@ class BemfaService:
 
         if not orphans:
             # Dismiss any previous orphan notification since there are none now
-            try:
-                self._hass.components.persistent_notification.async_dismiss(
-                    notification_id="bemfa_orphan_topics"
+            self._hass.async_create_task(
+                self._hass.services.async_call(
+                    "persistent_notification",
+                    "dismiss",
+                    {"notification_id": "bemfa_orphan_topics"},
                 )
-            except AttributeError:
-                pass
+            )
             return
 
         _LOGGING.warning(
@@ -121,21 +122,24 @@ class BemfaService:
             orphan_lines.append(f"- `{topic}` ({name})")
         orphan_list = "\n".join(orphan_lines)
 
-        try:
-            self._hass.components.persistent_notification.async_create(
-                f"巴法云上有 **{len(orphans)}** 个孤儿 Topic 未关联任何 HA 实体：\n\n"
-                f"{orphan_list}\n\n"
-                f"这些 Topic 可能是实体被删除、重命名或域名变更后遗留的。"
-                f"请前往 **设置 → 集成 → Bemfa → 选项 → 删除同步** 进行清理。",
-                title="Bemfa 孤儿 Topic 检测",
-                notification_id="bemfa_orphan_topics",
+        # Use service call which is always available, unlike
+        # hass.components.persistent_notification which may not be loaded
+        self._hass.async_create_task(
+            self._hass.services.async_call(
+                "persistent_notification",
+                "create",
+                {
+                    "title": "Bemfa 孤儿 Topic 检测",
+                    "message": (
+                        f"巴法云上有 **{len(orphans)}** 个孤儿 Topic 未关联任何 HA 实体：\n\n"
+                        f"{orphan_list}\n\n"
+                        f"这些 Topic 可能是实体被删除、重命名或域名变更后遗留的。"
+                        f"请前往 **设置 → 集成 → Bemfa → 选项 → 删除同步** 进行清理。"
+                    ),
+                    "notification_id": "bemfa_orphan_topics",
+                },
             )
-        except AttributeError:
-            _LOGGING.error(
-                "Persistent notification component not available, "
-                "cannot notify about %d orphan topics",
-                len(orphans),
-            )
+        )
 
     async def async_create_sync(self, sync: Sync, user_input: dict[str, str]):
         """Create a topic to bemfa service and keep communication by mqtt.

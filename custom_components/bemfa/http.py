@@ -17,6 +17,25 @@ from .const import (
 _LOGGING = logging.getLogger(__name__)
 
 
+def _check_api_response(label: str, res, res_dict: dict | None) -> bool:
+    """Check Bemfa API response and log errors. Returns True on success."""
+    if res.status != 200:
+        _LOGGING.error("%s: HTTP %d", label, res.status)
+        return False
+    if res_dict is None:
+        _LOGGING.error("%s: empty response body", label)
+        return False
+    code = res_dict.get("code")
+    status = res_dict.get("status", "")
+    if code == 111 or status == "get ok" or status == "add ok" or status == "update ok" or status == "del ok":
+        return True
+    _LOGGING.error(
+        "%s: API error code=%s status=%s msg=%s",
+        label, code, status, res_dict.get("msg", res_dict.get("message", "")),
+    )
+    return False
+
+
 class BemfaHttp:
     """Send http requests to bemfa service."""
 
@@ -31,22 +50,27 @@ class BemfaHttp:
         async with session.get(
             FETCH_TOPICS_URL.format(uid=self._uid),
         ) as res:
-            res.raise_for_status()
             res_dict = await res.json(content_type="text/html", encoding="utf-8")
-            if res_dict["code"] == 111 and res_dict["status"] == "get ok":
-                return {
-                    topic["topic_id"]: topic["v_name"]
-                    for topic in res_dict["data"]
-                    if topic["topic_id"].startswith(TOPIC_PREFIX)
-                }
-            return {}
+            if not _check_api_response("Fetch topics", res, res_dict):
+                return {}
+            return {
+                topic["topic_id"]: topic["v_name"]
+                for topic in res_dict.get("data", [])
+                if topic["topic_id"].startswith(TOPIC_PREFIX)
+            }
 
     async def async_create_topic(self, topic: str, name: str) -> None:
         """Create a topic to bemfa service."""
         if not topic.startswith(TOPIC_PREFIX):
+            _LOGGING.error(
+                "Reject topic '%s': must start with '%s'", topic, TOPIC_PREFIX
+            )
             return
         session = async_get_clientsession(self._hass)
-        await session.post(
+        _LOGGING.info(
+            "Creating Bemfa topic: '%s' name='%s'", topic, name
+        )
+        async with session.post(
             CREATE_TOPIC_URL,
             data={
                 "uid": self._uid,
@@ -54,14 +78,24 @@ class BemfaHttp:
                 "type": 1,
                 "name": name,
             },
-        )
+        ) as res:
+            try:
+                res_dict = await res.json(content_type=None)
+            except Exception:
+                res_text = await res.text()
+                _LOGGING.error(
+                    "Create topic '%s': HTTP %d, response: %s",
+                    topic, res.status, res_text[:200],
+                )
+                return
+            _check_api_response(f"Create topic '{topic}'", res, res_dict)
 
     async def async_rename_topic(self, topic: str, name: str) -> None:
         """Rename a topic in bemfa service."""
         if not topic.startswith(TOPIC_PREFIX):
             return
         session = async_get_clientsession(self._hass)
-        await session.post(
+        async with session.post(
             RENAME_TOPIC_URL,
             data={
                 "uid": self._uid,
@@ -69,18 +103,28 @@ class BemfaHttp:
                 "type": 1,
                 "name": name,
             },
-        )
+        ) as res:
+            try:
+                res_dict = await res.json(content_type=None)
+            except Exception:
+                return
+            _check_api_response(f"Rename topic '{topic}'", res, res_dict)
 
     async def async_del_topic(self, topic: str) -> None:
         """Delete a topic from bemfa service."""
         if not topic.startswith(TOPIC_PREFIX):
             return
         session = async_get_clientsession(self._hass)
-        await session.post(
+        async with session.post(
             DEL_TOPIC_URL,
             data={
                 "uid": self._uid,
                 "topic": topic,
                 "type": 1,
             },
-        )
+        ) as res:
+            try:
+                res_dict = await res.json(content_type=None)
+            except Exception:
+                return
+            _check_api_response(f"Delete topic '{topic}'", res, res_dict)

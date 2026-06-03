@@ -108,6 +108,9 @@ class Sync(ABC):
                 prefix = prefix[: max_prefix_len - 9]  # 9 = "_" + 8 hash chars
                 topic_name = prefix + "_" + hash_suffix + self._get_topic_suffix()
 
+            _LOGGING.debug(
+                "Generated topic '%s' for entity '%s'", topic_name, self._entity_id
+            )
             self._topic = topic_name
         return self._topic
 
