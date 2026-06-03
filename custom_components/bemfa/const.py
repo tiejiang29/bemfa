@@ -61,12 +61,29 @@ MSG_SPEED_COUNT: Final = 4  # for fans, 4 speed supported at most
 
 # #### Service Api ####
 # Reference: https://cloud.bemfa.com/docs/src/api_device.html
-HTTP_BASE_URL: Final = f"https://api.{MQTT_HOST}/api/"
-# Fetch topics - legacy API (no new API equivalent)
-FETCH_TOPICS_URL: Final = "https://api.bemfa.com/api/device/v1/topic/?uid={uid}&type=2"
-# Create topic - Official new API (JSON, topic: letters+digits only)
+#
+# Bemfa has multiple API domains:
+#   pro.bemfa.com  — create/delete topic (new, JSON) — may return 40000
+#   apis.bemfa.com — query/modify (new, JSON) — documented and working
+#   api.bemfa.com  — legacy (form-data) — proven reliable for create/delete
+
+# --- Create topic ---
+# Official new API: POST https://pro.bemfa.com/v1/createTopic (JSON)
+# Some users report 40000 errors, so we fallback to legacy API.
 CREATE_TOPIC_URL: Final = "https://pro.bemfa.com/v1/createTopic"
-# Delete topic - Official new API (JSON)
+CREATE_TOPIC_URL_LEGACY: Final = f"https://api.{MQTT_HOST}/api/user/addtopic/"
+
+# --- Delete topic ---
+# Official new API: POST https://pro.bemfa.com/v1/deleteTopic (JSON)
 DEL_TOPIC_URL: Final = "https://pro.bemfa.com/v1/deleteTopic"
-# Rename topic - legacy API (no new API equivalent)
-RENAME_TOPIC_URL: Final = f"{HTTP_BASE_URL}device/v1/topic/name/"
+DEL_TOPIC_URL_LEGACY: Final = f"https://api.{MQTT_HOST}/api/user/deltopic/"
+
+# --- Fetch all topics ---
+# Official API: GET https://apis.bemfa.com/vb/api/v2/allTopic?openID={uid}&type=1
+FETCH_TOPICS_URL: Final = "https://apis.bemfa.com/vb/api/v2/allTopic?openID={uid}&type=1"
+# Legacy fetch API (fallback, returns different response format)
+FETCH_TOPICS_URL_LEGACY: Final = "https://api.bemfa.com/api/device/v1/topic/?uid={uid}&type=2"
+
+# --- Rename topic ---
+# Official API: POST https://apis.bemfa.com/va/modifyName (JSON)
+RENAME_TOPIC_URL: Final = "https://apis.bemfa.com/va/modifyName"
