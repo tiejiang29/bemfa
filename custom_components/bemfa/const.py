@@ -60,12 +60,13 @@ MSG_PAUSE: Final = "pause"  # for covers
 MSG_SPEED_COUNT: Final = 4  # for fans, 4 speed supported at most
 
 # #### Service Api ####
+# Reference: https://cloud.bemfa.com/docs/src/api_device.html
 HTTP_BASE_URL: Final = f"https://api.{MQTT_HOST}/api/"
+# Fetch topics - legacy API (no new API equivalent)
 FETCH_TOPICS_URL: Final = "https://api.bemfa.com/api/device/v1/topic/?uid={uid}&type=2"
-# New API (JSON) - may return 40000 on some accounts
-CREATE_TOPIC_URL_V2: Final = "https://pro.bemfa.com/v1/createTopic"
-DEL_TOPIC_URL_V2: Final = "https://pro.bemfa.com/v1/deleteTopic"
-# Legacy API (form-data) - more reliable but may reject underscores
-CREATE_TOPIC_URL: Final = f"{HTTP_BASE_URL}user/addtopic/"
+# Create topic - Official new API (JSON, topic: letters+digits only)
+CREATE_TOPIC_URL: Final = "https://pro.bemfa.com/v1/createTopic"
+# Delete topic - Official new API (JSON)
+DEL_TOPIC_URL: Final = "https://pro.bemfa.com/v1/deleteTopic"
+# Rename topic - legacy API (no new API equivalent)
 RENAME_TOPIC_URL: Final = f"{HTTP_BASE_URL}device/v1/topic/name/"
-DEL_TOPIC_URL: Final = f"{HTTP_BASE_URL}user/deltopic/"
