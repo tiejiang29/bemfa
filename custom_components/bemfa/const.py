@@ -62,28 +62,35 @@ MSG_SPEED_COUNT: Final = 4  # for fans, 4 speed supported at most
 # #### Service Api ####
 # Reference: https://cloud.bemfa.com/docs/src/api_device.html
 #
-# Bemfa has multiple API domains:
-#   pro.bemfa.com  — create/delete topic (new, JSON) — may return 40000
-#   apis.bemfa.com — query/modify (new, JSON) — documented and working
-#   api.bemfa.com  — legacy (form-data) — proven reliable for create/delete
-
-# --- Create topic ---
-# Official new API: POST https://pro.bemfa.com/v1/createTopic (JSON)
-# Some users report 40000 errors, so we fallback to legacy API.
-CREATE_TOPIC_URL: Final = "https://pro.bemfa.com/v1/createTopic"
-CREATE_TOPIC_URL_LEGACY: Final = f"https://api.{MQTT_HOST}/api/user/addtopic/"
-
-# --- Delete topic ---
-# Official new API: POST https://pro.bemfa.com/v1/deleteTopic (JSON)
-DEL_TOPIC_URL: Final = "https://pro.bemfa.com/v1/deleteTopic"
-DEL_TOPIC_URL_LEGACY: Final = f"https://api.{MQTT_HOST}/api/user/deltopic/"
+# Strategy: always try legacy API first (proven reliable), fall back to
+# new documented API if legacy fails.  All legacy APIs use form-data;
+# all new APIs use JSON.
+#
+# Bemfa API domains:
+#   api.bemfa.com  — legacy (form-data) — proven reliable, used first
+#   apis.bemfa.com — query/modify (new, JSON) — documented fallback
+#   pro.bemfa.com  — create/delete (new, JSON) — documented fallback
 
 # --- Fetch all topics ---
-# Official API: GET https://apis.bemfa.com/vb/api/v2/allTopic?openID={uid}&type=1
-FETCH_TOPICS_URL: Final = "https://apis.bemfa.com/vb/api/v2/allTopic?openID={uid}&type=1"
-# Legacy fetch API (fallback, returns different response format)
-FETCH_TOPICS_URL_LEGACY: Final = "https://api.bemfa.com/api/device/v1/topic/?uid={uid}&type=2"
+# Legacy: GET https://api.bemfa.com/api/device/v1/topic/?uid={uid}&type=2
+FETCH_TOPICS_URL: Final = "https://api.bemfa.com/api/device/v1/topic/?uid={uid}&type=2"
+# New documented API (fallback): GET .../allTopic?openID={uid}&type=1
+FETCH_TOPICS_URL_NEW: Final = "https://apis.bemfa.com/vb/api/v2/allTopic?openID={uid}&type=1"
+
+# --- Create topic ---
+# Legacy: POST https://api.bemfa.com/api/user/addtopic/  (form-data)
+CREATE_TOPIC_URL: Final = f"https://api.{MQTT_HOST}/api/user/addtopic/"
+# New documented API (fallback): POST .../createTopic  (JSON)
+CREATE_TOPIC_URL_NEW: Final = "https://pro.bemfa.com/v1/createTopic"
+
+# --- Delete topic ---
+# Legacy: POST https://api.bemfa.com/api/user/deltopic/  (form-data)
+DEL_TOPIC_URL: Final = f"https://api.{MQTT_HOST}/api/user/deltopic/"
+# New documented API (fallback): POST .../deleteTopic  (JSON)
+DEL_TOPIC_URL_NEW: Final = "https://pro.bemfa.com/v1/deleteTopic"
 
 # --- Rename topic ---
-# Official API: POST https://apis.bemfa.com/va/modifyName (JSON)
-RENAME_TOPIC_URL: Final = "https://apis.bemfa.com/va/modifyName"
+# Legacy: POST https://api.bemfa.com/api/device/v1/topic/name/  (form-data)
+RENAME_TOPIC_URL: Final = f"https://api.{MQTT_HOST}/api/device/v1/topic/name/"
+# New documented API (fallback): POST .../modifyName  (JSON)
+RENAME_TOPIC_URL_NEW: Final = "https://apis.bemfa.com/va/modifyName"
