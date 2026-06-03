@@ -9,7 +9,9 @@ from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
 from .const import (
     CREATE_TOPIC_URL,
+    CREATE_TOPIC_URL_V2,
     DEL_TOPIC_URL,
+    DEL_TOPIC_URL_V2,
     FETCH_TOPICS_URL,
     RENAME_TOPIC_URL,
     TOPIC_PREFIX,
@@ -33,10 +35,13 @@ def _check_api_response(label: str, res, res_dict: dict | None) -> bool:
     if code in (0, 111) or status in ("get ok", "add ok", "update ok", "del ok"):
         return True
     _LOGGING.error(
-        "%s: API error code=%s status=%s msg=%s (full: %s)",
+        "%s: API error code=%s status=%s msg=%s",
         label, code, status,
         res_dict.get("msg", res_dict.get("message", "")),
-        json.dumps(res_dict, ensure_ascii=False)[:300],
+    )
+    _LOGGING.debug(
+        "%s: full response: %s",
+        label, json.dumps(res_dict, ensure_ascii=False)[:300],
     )
     return False
 
@@ -65,12 +70,12 @@ class BemfaHttp:
             }
 
     async def async_create_topic(self, topic: str, name: str) -> None:
-        """Create a topic to bemfa service using the new JSON API.
+        """Create a topic on Bemfa cloud.
 
-        New API: POST https://pro.bemfa.com/v1/createTopic
-        Content-Type: application/json
-        Body: {"uid": "...", "topic": "...", "type": 1, "name": "..."}
-        Topic name: only letters and digits allowed (no underscores!)
+        Strategy: Try the new JSON API first (pro.bemfa.com).
+        If it fails, fall back to the legacy form-data API (api.bemfa.com).
+        The legacy API works reliably as long as topic names contain
+        only letters and digits (no underscores).
         """
         if not topic.startswith(TOPIC_PREFIX):
             _LOGGING.error(
@@ -79,9 +84,39 @@ class BemfaHttp:
             return
         session = async_get_clientsession(self._hass)
         _LOGGING.info("Creating Bemfa topic: '%s' name='%s'", topic, name)
+
+        # Try new JSON API first
+        try:
+            async with session.post(
+                CREATE_TOPIC_URL_V2,
+                json={
+                    "uid": self._uid,
+                    "topic": topic,
+                    "type": 1,
+                    "name": name,
+                },
+            ) as res:
+                res_dict = await res.json(content_type=None)
+                if _check_api_response(
+                    f"Create topic '{topic}' (v2 API)", res, res_dict
+                ):
+                    return
+                _LOGGING.warning(
+                    "New API (pro.bemfa.com) failed for topic '%s', "
+                    "falling back to legacy API",
+                    topic,
+                )
+        except Exception as err:  # noqa: BLE001
+            _LOGGING.warning(
+                "New API (pro.bemfa.com) exception for topic '%s': %s, "
+                "falling back to legacy API",
+                topic, err,
+            )
+
+        # Fallback: legacy form-data API
         async with session.post(
             CREATE_TOPIC_URL,
-            json={
+            data={
                 "uid": self._uid,
                 "topic": topic,
                 "type": 1,
@@ -93,11 +128,11 @@ class BemfaHttp:
             except Exception:
                 res_text = await res.text()
                 _LOGGING.error(
-                    "Create topic '%s': HTTP %d, response: %s",
+                    "Create topic '%s' (legacy API): HTTP %d, response: %s",
                     topic, res.status, res_text[:200],
                 )
                 return
-            _check_api_response(f"Create topic '{topic}'", res, res_dict)
+            _check_api_response(f"Create topic '{topic}' (legacy API)", res, res_dict)
 
     async def async_rename_topic(self, topic: str, name: str) -> None:
         """Rename a topic in bemfa service."""
@@ -120,18 +155,45 @@ class BemfaHttp:
             _check_api_response(f"Rename topic '{topic}'", res, res_dict)
 
     async def async_del_topic(self, topic: str) -> None:
-        """Delete a topic from bemfa service using the new JSON API.
+        """Delete a topic from Bemfa cloud.
 
-        New API: POST https://pro.bemfa.com/v1/deleteTopic
-        Content-Type: application/json
-        Body: {"uid": "...", "topic": "...", "type": 1}
+        Strategy: Try the new JSON API first, fall back to legacy.
         """
         if not topic.startswith(TOPIC_PREFIX):
             return
         session = async_get_clientsession(self._hass)
+
+        # Try new JSON API first
+        try:
+            async with session.post(
+                DEL_TOPIC_URL_V2,
+                json={
+                    "uid": self._uid,
+                    "topic": topic,
+                    "type": 1,
+                },
+            ) as res:
+                res_dict = await res.json(content_type=None)
+                if _check_api_response(
+                    f"Delete topic '{topic}' (v2 API)", res, res_dict
+                ):
+                    return
+                _LOGGING.warning(
+                    "New API (pro.bemfa.com) delete failed for topic '%s', "
+                    "falling back to legacy API",
+                    topic,
+                )
+        except Exception as err:  # noqa: BLE001
+            _LOGGING.warning(
+                "New API (pro.bemfa.com) delete exception for topic '%s': %s, "
+                "falling back to legacy API",
+                topic, err,
+            )
+
+        # Fallback: legacy form-data API
         async with session.post(
             DEL_TOPIC_URL,
-            json={
+            data={
                 "uid": self._uid,
                 "topic": topic,
                 "type": 1,
@@ -141,4 +203,4 @@ class BemfaHttp:
                 res_dict = await res.json(content_type=None)
             except Exception:
                 return
-            _check_api_response(f"Delete topic '{topic}'", res, res_dict)
+            _check_api_response(f"Delete topic '{topic}' (legacy API)", res, res_dict)
