@@ -44,6 +44,7 @@
                 "title": "Configuation",
                 "description": "Configuate a hass-to-bemfa sensor sync.",
                 "data": {
+                    "type": "Bemfa device type",
                     "name": "Name",
                     "temperature": "Select a temperature sensor",
                     "humidity": "Select a humidity sensor",
@@ -55,6 +56,7 @@
                 "title": "Configuation",
                 "description": "Configuate a hass-to-bemfa binary sensor sync.",
                 "data": {
+                    "type": "Bemfa device type",
                     "name": "Name"
                 }
             },
@@ -62,6 +64,7 @@
                 "title": "Configuation",
                 "description": "Configuate a hass-to-bemfa climate sync.",
                 "data": {
+                    "type": "Bemfa device type",
                     "name": "Name",
                     "fan_speed_0_value": "Fan speed auto",
                     "fan_speed_1_value": "Fan speed 1",
@@ -79,6 +82,7 @@
                 "title": "Configuation",
                 "description": "Configuate a hass-to-bemfa cover sync.",
                 "data": {
+                    "type": "Bemfa device type",
                     "name": "Name"
                 }
             },
@@ -86,6 +90,7 @@
                 "title": "Configuation",
                 "description": "Configuate a hass-to-bemfa fan sync.",
                 "data": {
+                    "type": "Bemfa device type",
                     "name": "Name"
                 }
             },
@@ -93,6 +98,7 @@
                 "title": "Configuation",
                 "description": "Configuate a hass-to-bemfa light sync.",
                 "data": {
+                    "type": "Bemfa device type",
                     "name": "Name"
                 }
             },
@@ -100,6 +106,7 @@
                 "title": "Configuation",
                 "description": "Configuate a hass-to-bemfa switch sync.",
                 "data": {
+                    "type": "Bemfa device type",
                     "name": "Name"
                 }
             },

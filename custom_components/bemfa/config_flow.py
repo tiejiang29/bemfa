@@ -42,6 +42,12 @@ _SUPPORTED_DOMAINS = [
     "climate", "sensor", "binary_sensor",
 ]
 
+# Type options list (shared between create and modify)
+_TYPE_OPTIONS = [
+    SelectOptionDict(value=suffix, label=label)
+    for suffix, label in BEMFA_TYPE_MAP.items()
+]
+
 STEP_USER_DATA_SCHEMA = vol.Schema(
     {
         vol.Required(CONF_UID): str,
@@ -53,6 +59,13 @@ def _get_default_type_suffix(entity_id: str) -> str:
     """Get the default Bemfa type suffix for a given HA entity_id."""
     domain = entity_id.split(".")[0]
     return DOMAIN_TYPE_MAP.get(domain, TopicSuffix.SWITCH)
+
+
+def _get_effective_type_suffix(sync: Sync, type_overrides: dict[str, str]) -> str:
+    """Get the effective Bemfa type suffix for a sync, considering overrides."""
+    if sync.entity_id in type_overrides:
+        return type_overrides[sync.entity_id]
+    return _get_default_type_suffix(sync.entity_id)
 
 
 class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
@@ -164,18 +177,14 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
             if sync.entity_id in self._type_overrides:
                 sync.topic_suffix = self._type_overrides[sync.entity_id]
 
+    # ================================================================
+    # CREATE sync flow
+    # ================================================================
+
     async def async_step_create_sync(
         self, user_input: dict[str, Any] | None = None
     ) -> FlowResult:
-        """Create hass-to-bemfa sync(s). Supports multi-select with search.
-
-        Uses EntitySelector which provides a built-in searchable dropdown
-        in HA's frontend — type to filter entities in real-time.
-
-        After selecting entities, all entities appear on one page with name
-        and type inputs. Simple types are created right after; complex types
-        get additional config pages.
-        """
+        """Create hass-to-bemfa sync(s). Supports multi-select with search."""
         if user_input is not None:
             selected_ids = user_input[OPTIONS_SELECT]
             # Ensure list (single select returns str)
@@ -195,7 +204,6 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
             # Build Sync objects for selected entities
             service = self._get_service()
             all_syncs = service.collect_supported_syncs()
-            # Apply type overrides so topics match Bemfa cloud
             self._apply_type_overrides(all_syncs)
             sync_by_eid = {s.entity_id: s for s in all_syncs}
 
@@ -220,13 +228,11 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
                     last_step=False,
                 )
 
-            # Go to the shared names page
             return await self.async_step_create_sync_names()
 
         service = self._get_service()
         all_topics = await service.async_fetch_all_topics()
         all_syncs = service.collect_supported_syncs()
-        # Apply type overrides so topics match what's on Bemfa cloud
         self._apply_type_overrides(all_syncs)
         self._sync_dict = {}
         for sync in all_syncs:
@@ -236,7 +242,6 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
         if not bool(self._sync_dict):
             return self.async_show_form(step_id="empty", last_step=False)
 
-        # Compute already-synced entity IDs for exclusion
         self._synced_entity_ids = [
             s.entity_id for s in all_syncs if s.topic in all_topics
         ]
@@ -251,12 +256,7 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
         )
 
     def _build_create_schema(self) -> vol.Schema:
-        """Build the schema for the create sync selection step.
-
-        Uses EntitySelector which provides HA's native entity picker with
-        built-in real-time search. Excludes entities already synced to
-        Bemfa and filters by supported domains.
-        """
+        """Build the schema for the create sync selection step."""
         return vol.Schema(
             {
                 vol.Optional(OPTIONS_SELECT, default=[]): EntitySelector(
@@ -274,55 +274,40 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
     ) -> FlowResult:
         """Set names and types for all selected entities on one page.
 
-        Each entity gets its own name input field with the HA friendly name
-        as default, and a type selector defaulting to the HA auto-determined
-        type. Users can override the type (e.g. switch → light) so that
-        Bemfa categorizes the device differently for voice control.
-
-        After submitting:
-        - Simple types (light, switch, cover, fan, binary_sensor) are
-          created immediately with the specified names and types.
-        - Complex types (climate, sensor) are queued for individual
-          config pages where they can set extra parameters.
+        Uses indexed keys (名称_N, 类型_N) for clean display, with a
+        Markdown reference table in the description showing entity details.
         """
         if user_input is not None:
             service = self._get_service()
 
-            # Apply names and type overrides from the form
             simple_syncs: list[Sync] = []
             complex_syncs: list[Sync] = []
 
-            for sync in self._selected_syncs:
-                # Look up the name by key (entity_id with dots→underscores)
-                key = sync.entity_id.replace(".", "_")
-                name = user_input.get(key, sync.name) or sync.name
+            for i, sync in enumerate(self._selected_syncs, 1):
+                # Look up by indexed keys
+                name = user_input.get(f"名称_{i}", sync.name) or sync.name
                 sync.name = name
 
                 # Check for type override
-                type_key = f"{key}_{OPTIONS_TYPE}"
                 default_suffix = _get_default_type_suffix(sync.entity_id)
-                selected_type = user_input.get(type_key, default_suffix)
+                selected_type = user_input.get(f"类型_{i}", default_suffix)
 
                 if selected_type and selected_type != default_suffix:
                     sync.topic_suffix = selected_type
                     self._type_overrides[sync.entity_id] = selected_type
                 elif sync.entity_id in self._type_overrides:
-                    # Remove override if user reverted to default
                     del self._type_overrides[sync.entity_id]
 
-                # Schema with only OPTIONS_NAME → simple type
                 if len(sync.generate_details_schema()) <= 1:
                     simple_syncs.append(sync)
                 else:
                     complex_syncs.append(sync)
 
-            # Batch create simple syncs
             for sync in simple_syncs:
                 await service.async_create_sync(sync, {OPTIONS_NAME: sync.name})
                 if sync.config:
                     self._config[sync.topic] = sync.config
 
-            # Handle complex syncs that need individual configuration
             if complex_syncs:
                 self._pending_syncs = complex_syncs[1:]
                 self._sync = complex_syncs[0]
@@ -336,41 +321,43 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
                 },
             )
 
-        # Build schema: one name input + one type selector per entity
-        schema_fields = {}
-        type_options = [
-            SelectOptionDict(value=suffix, label=label)
-            for suffix, label in BEMFA_TYPE_MAP.items()
-        ]
-
-        for sync in self._selected_syncs:
-            key = sync.entity_id.replace(".", "_")
-            # Name input with friendly name as default
-            schema_fields[vol.Optional(key, default=sync.name)] = str
-            # Type selector with HA auto-determined type as default
+        # Build Markdown reference table for the description
+        header = "| 序号 | 实体名称 | HA 类型 | 默认巴法云类型 |"
+        sep = "|:----:|----------|---------|---------------|"
+        rows = []
+        for i, sync in enumerate(self._selected_syncs, 1):
+            domain = sync.entity_id.split(".")[0]
             default_suffix = _get_default_type_suffix(sync.entity_id)
-            # If there's a stored override for this entity, use it as default
-            if sync.entity_id in self._type_overrides:
-                default_suffix = self._type_overrides[sync.entity_id]
-            schema_fields[
-                vol.Optional(f"{key}_{OPTIONS_TYPE}", default=default_suffix)
-            ] = SelectSelector(
-                SelectSelectorConfig(
-                    options=type_options,
-                    mode=SelectSelectorMode.DROPDOWN,
-                )
-            )
+            default_type_name = BEMFA_TYPE_MAP.get(default_suffix, default_suffix)
+            rows.append(f"| {i} | {sync.name} | {domain} | {default_type_name} |")
 
-        # Build hint text
+        table = f"{header}\n{sep}\n" + "\n".join(rows)
+
         complex_count = sum(
             1 for s in self._selected_syncs
             if len(s.generate_details_schema()) > 1
         )
-        hint_parts = [f"为 {len(self._selected_syncs)} 个实体设置名称和类型"]
-        hint_parts.append("（类型决定巴法云中设备分类，影响语音控制命令）")
+        hint_parts = [table]
+        hint_parts.append("\n\n类型决定巴法云中设备分类，影响语音控制命令。")
         if complex_count:
             hint_parts.append(
                 f"（其中 {complex_count} 个复杂类型还需单独配置参数）"
+            )
+
+        # Build schema: indexed name + type per entity
+        schema_fields = {}
+        for i, sync in enumerate(self._selected_syncs, 1):
+            # Name input
+            schema_fields[vol.Optional(f"名称_{i}", default=sync.name)] = str
+            # Type selector
+            effective_suffix = _get_effective_type_suffix(sync, self._type_overrides)
+            schema_fields[
+                vol.Optional(f"类型_{i}", default=effective_suffix)
+            ] = SelectSelector(
+                SelectSelectorConfig(
+                    options=_TYPE_OPTIONS,
+                    mode=SelectSelectorMode.DROPDOWN,
+                )
             )
 
         return self.async_show_form(
@@ -378,6 +365,10 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
             data_schema=vol.Schema(schema_fields),
             description_placeholders={"hint": "".join(hint_parts)},
         )
+
+    # ================================================================
+    # MODIFY sync flow
+    # ================================================================
 
     async def async_step_modify_sync(
         self, user_input: dict[str, Any] | None = None
@@ -390,7 +381,6 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
         service = self._get_service()
         all_topics = await service.async_fetch_all_topics()
         all_syncs = service.collect_supported_syncs()
-        # Apply type overrides so topics match Bemfa cloud
         self._apply_type_overrides(all_syncs)
         self._sync_dict = {}
         for sync in all_syncs:
@@ -425,9 +415,33 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
         )
 
     async def _async_step_sync_config(self) -> FlowResult:
-        """Set details of a hass-to-bemfa sync."""
+        """Set details of a hass-to-bemfa sync.
+
+        For modify, includes a type selector so users can change
+        the Bemfa device type (e.g. switch → light).
+        """
         if self._sync.topic in self._config:
             self._sync.config = self._config[self._sync.topic]
+
+        # Build schema: type selector (for modify) + original schema fields
+        schema_dict: dict[Any, Any] = {}
+
+        # Add type selector for modify flow
+        if not self._is_create:
+            effective_suffix = _get_effective_type_suffix(
+                self._sync, self._type_overrides
+            )
+            schema_dict[vol.Optional(OPTIONS_TYPE, default=effective_suffix)] = (
+                SelectSelector(
+                    SelectSelectorConfig(
+                        options=_TYPE_OPTIONS,
+                        mode=SelectSelectorMode.DROPDOWN,
+                    )
+                )
+            )
+
+        # Add original schema fields (name + extra params)
+        schema_dict.update(self._sync.generate_details_schema())
 
         # Show remaining count if there are more syncs queued
         description = None
@@ -436,7 +450,7 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
 
         return self.async_show_form(
             step_id=self._sync.get_config_step_id(),
-            data_schema=vol.Schema(self._sync.generate_details_schema()),
+            data_schema=vol.Schema(schema_dict),
             description_placeholders={"hint": description} if description else None,
         )
 
@@ -485,7 +499,59 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
     async def _async_step_sync_config_done(
         self, user_input: dict[str, Any] | None = None
     ) -> FlowResult:
+        """Process sync config form submission.
+
+        Handles type changes for modify: if the Bemfa device type changed,
+        the old topic is deleted and a new one is created with the new suffix.
+        """
         service = self._get_service()
+
+        # Check for type change (only relevant for modify)
+        if not self._is_create and OPTIONS_TYPE in user_input:
+            new_type = user_input.pop(OPTIONS_TYPE)
+            old_suffix = _get_effective_type_suffix(self._sync, self._type_overrides)
+            default_suffix = _get_default_type_suffix(self._sync.entity_id)
+
+            if new_type != old_suffix:
+                # Type changed! Need to delete old topic and create new one
+                old_topic = self._sync.topic
+                old_config = self._config.pop(old_topic, {})
+
+                # Delete old sync (topic + MQTT subscription)
+                await service.async_destroy_sync(old_topic)
+
+                # Update the type override
+                if new_type != default_suffix:
+                    self._type_overrides[self._sync.entity_id] = new_type
+                elif self._sync.entity_id in self._type_overrides:
+                    del self._type_overrides[self._sync.entity_id]
+
+                # Apply new type suffix (this changes sync.topic)
+                self._sync.topic_suffix = new_type
+
+                # Create new sync with the new topic
+                await service.async_create_sync(self._sync, user_input)
+
+                # Migrate old config to new topic key
+                if old_config:
+                    self._config[self._sync.topic] = old_config
+                if self._sync.config:
+                    self._config[self._sync.topic] = self._sync.config
+
+                # Handle pending syncs or finish
+                if self._pending_syncs:
+                    self._sync = self._pending_syncs.pop(0)
+                    return await self._async_step_sync_config()
+
+                return self.async_create_entry(
+                    title="",
+                    data={
+                        OPTIONS_CONFIG: self._config,
+                        TYPE_OVERRIDES_KEY: self._type_overrides,
+                    },
+                )
+
+        # Normal flow (no type change, or create)
         if self._is_create:
             await service.async_create_sync(self._sync, user_input)
         else:
@@ -509,6 +575,10 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
                 TYPE_OVERRIDES_KEY: self._type_overrides,
             },
         )
+
+    # ================================================================
+    # DESTROY sync flow
+    # ================================================================
 
     async def async_step_destroy_sync(
         self, user_input: dict[str, Any] | None = None
@@ -545,7 +615,6 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
 
         all_topics = await service.async_fetch_all_topics()
         all_syncs = service.collect_supported_syncs()
-        # Apply type overrides so topics match Bemfa cloud
         self._apply_type_overrides(all_syncs)
         topic_map: dict[str, str] = {}
         for sync in all_syncs:
