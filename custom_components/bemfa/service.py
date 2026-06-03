@@ -102,12 +102,12 @@ class BemfaService:
 
         if not orphans:
             # Dismiss any previous orphan notification since there are none now
-            self._hass.async_create_task(
-                self._hass.services.async_call(
-                    "persistent_notification",
-                    "dismiss",
-                    {"notification_id": "bemfa_orphan_topics"},
-                )
+            # hass.services.call() is thread-safe: internally uses
+            # run_coroutine_threadsafe when called from non-event-loop threads
+            self._hass.services.call(
+                "persistent_notification",
+                "dismiss",
+                {"notification_id": "bemfa_orphan_topics"},
             )
             return
 
@@ -122,23 +122,23 @@ class BemfaService:
             orphan_lines.append(f"- `{topic}` ({name})")
         orphan_list = "\n".join(orphan_lines)
 
-        # Use service call which is always available, unlike
-        # hass.components.persistent_notification which may not be loaded
-        self._hass.async_create_task(
-            self._hass.services.async_call(
-                "persistent_notification",
-                "create",
-                {
-                    "title": "Bemfa 孤儿 Topic 检测",
-                    "message": (
-                        f"巴法云上有 **{len(orphans)}** 个孤儿 Topic 未关联任何 HA 实体：\n\n"
-                        f"{orphan_list}\n\n"
-                        f"这些 Topic 可能是实体被删除、重命名或域名变更后遗留的。"
-                        f"请前往 **设置 → 集成 → Bemfa → 选项 → 删除同步** 进行清理。"
-                    ),
-                    "notification_id": "bemfa_orphan_topics",
-                },
-            )
+        # hass.services.call() is thread-safe: internally uses
+        # run_coroutine_threadsafe when called from non-event-loop threads.
+        # Do NOT use hass.async_create_task + hass.services.async_call here
+        # because _detect_orphan_topics may be called from a SyncWorker thread.
+        self._hass.services.call(
+            "persistent_notification",
+            "create",
+            {
+                "title": "Bemfa 孤儿 Topic 检测",
+                "message": (
+                    f"巴法云上有 **{len(orphans)}** 个孤儿 Topic 未关联任何 HA 实体：\n\n"
+                    f"{orphan_list}\n\n"
+                    f"这些 Topic 可能是实体被删除、重命名或域名变更后遗留的。"
+                    f"请前往 **设置 → 集成 → Bemfa → 选项 → 删除同步** 进行清理。"
+                ),
+                "notification_id": "bemfa_orphan_topics",
+            },
         )
 
     async def async_create_sync(self, sync: Sync, user_input: dict[str, str]):

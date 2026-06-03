@@ -1,6 +1,7 @@
 """Bemfa http apis."""
 from __future__ import annotations
 
+import json
 import logging
 
 from homeassistant.core import HomeAssistant
@@ -26,12 +27,16 @@ def _check_api_response(label: str, res, res_dict: dict | None) -> bool:
         _LOGGING.error("%s: empty response body", label)
         return False
     code = res_dict.get("code")
+    # New API returns code=0 on success, old API returns code=111
+    # Old API uses status field: "get ok", "add ok", "update ok", "del ok"
     status = res_dict.get("status", "")
-    if code == 111 or status == "get ok" or status == "add ok" or status == "update ok" or status == "del ok":
+    if code in (0, 111) or status in ("get ok", "add ok", "update ok", "del ok"):
         return True
     _LOGGING.error(
-        "%s: API error code=%s status=%s msg=%s",
-        label, code, status, res_dict.get("msg", res_dict.get("message", "")),
+        "%s: API error code=%s status=%s msg=%s (full: %s)",
+        label, code, status,
+        res_dict.get("msg", res_dict.get("message", "")),
+        json.dumps(res_dict, ensure_ascii=False)[:300],
     )
     return False
 
@@ -60,19 +65,23 @@ class BemfaHttp:
             }
 
     async def async_create_topic(self, topic: str, name: str) -> None:
-        """Create a topic to bemfa service."""
+        """Create a topic to bemfa service using the new JSON API.
+
+        New API: POST https://pro.bemfa.com/v1/createTopic
+        Content-Type: application/json
+        Body: {"uid": "...", "topic": "...", "type": 1, "name": "..."}
+        Topic name: only letters and digits allowed (no underscores!)
+        """
         if not topic.startswith(TOPIC_PREFIX):
             _LOGGING.error(
                 "Reject topic '%s': must start with '%s'", topic, TOPIC_PREFIX
             )
             return
         session = async_get_clientsession(self._hass)
-        _LOGGING.info(
-            "Creating Bemfa topic: '%s' name='%s'", topic, name
-        )
+        _LOGGING.info("Creating Bemfa topic: '%s' name='%s'", topic, name)
         async with session.post(
             CREATE_TOPIC_URL,
-            data={
+            json={
                 "uid": self._uid,
                 "topic": topic,
                 "type": 1,
@@ -111,13 +120,18 @@ class BemfaHttp:
             _check_api_response(f"Rename topic '{topic}'", res, res_dict)
 
     async def async_del_topic(self, topic: str) -> None:
-        """Delete a topic from bemfa service."""
+        """Delete a topic from bemfa service using the new JSON API.
+
+        New API: POST https://pro.bemfa.com/v1/deleteTopic
+        Content-Type: application/json
+        Body: {"uid": "...", "topic": "...", "type": 1}
+        """
         if not topic.startswith(TOPIC_PREFIX):
             return
         session = async_get_clientsession(self._hass)
         async with session.post(
             DEL_TOPIC_URL,
-            data={
+            json={
                 "uid": self._uid,
                 "topic": topic,
                 "type": 1,
