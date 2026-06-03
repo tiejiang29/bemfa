@@ -194,4 +194,12 @@ class BemfaMqtt:
             return
 
         if message.topic in self._topic_to_sync:
-            self._topic_to_sync[message.topic].resolve_msg(message.payload.decode())
+            payload = message.payload.decode()
+            _LOGGING.debug(
+                "Received MQTT message on topic %s: %s", message.topic, payload
+            )
+            self._topic_to_sync[message.topic].resolve_msg(payload)
+        else:
+            _LOGGING.debug(
+                "Received MQTT message on unregistered topic %s", message.topic
+            )

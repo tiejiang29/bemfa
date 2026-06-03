@@ -163,10 +163,23 @@ class ControllableSync(Sync):
         raise NotImplementedError
 
     def resolve_msg(self, msg: str):
-        """Resolve mqtt msg received from bemfa service."""
+        """Resolve mqtt msg received from bemfa service.
+
+        Note: This method is called from the paho-mqtt network thread,
+        NOT from the HA event loop. Therefore we must use thread-safe
+        methods to schedule work on the event loop.
+        """
         state = self._hass.states.get(self._entity_id)
         if state is None:
+            _LOGGING.warning(
+                "Cannot resolve msg for %s: entity state not found", self._entity_id
+            )
             return
+
+        _LOGGING.debug(
+            "Resolving msg for %s: '%s' (current state: %s)",
+            self._entity_id, msg, state.state,
+        )
 
         msg_list: list[str] = msg.split(MSG_SEPARATOR)
         if msg_list[0] == MSG_OFF:
@@ -189,10 +202,13 @@ class ControllableSync(Sync):
                     state.attributes,
                 )
                 data.update({ATTR_ENTITY_ID: self._entity_id})
-                self._hass.async_create_task(
-                    self._hass.services.async_call(
-                        domain=domain, service=service, service_data=data
-                    )
+                # Must use hass.services.call() which is thread-safe:
+                # it internally uses run_coroutine_threadsafe to schedule
+                # async_call on the event loop. Using async_create_task()
+                # directly is NOT thread-safe when called from the
+                # paho-mqtt callback thread and will silently fail.
+                self._hass.services.call(
+                    domain=domain, service=service, service_data=data
                 )
                 break  # call only one service at most on each msg received
 
