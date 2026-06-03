@@ -89,9 +89,8 @@ class Sync(ABC):
         return self._topic
 
     def generate_option_label(self) -> str:
-        """Generate label in front end options list as "[domain]name"."""
-        domain = self._entity_id.split(".")[0]
-        return "[{domain}] {name}".format(domain=domain, name=self._name)
+        """Generate label in front end options list as "entity_id (friendly_name)"."""
+        return "{entity_id} ({name})".format(entity_id=self._entity_id, name=self._name)
 
     def generate_details_schema(self) -> dict[str, Any]:
         """Generate schema in front end details setting form."""
