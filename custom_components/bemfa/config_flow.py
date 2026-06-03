@@ -22,6 +22,7 @@ from .const import (
     CONF_UID,
     DOMAIN,
     OPTIONS_CONFIG,
+    OPTIONS_NAME,
     OPTIONS_SELECT,
 )
 from .service import BemfaService
@@ -89,8 +90,11 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
     # with this map we can get it in the next step
     _sync_dict: dict[str, Sync]
 
-    # current sync we are creating or modifu
+    # current sync we are creating or modify
     _sync: Sync
+
+    # queue of complex syncs that need individual config after batch creation
+    _pending_complex_syncs: list[Sync]
 
     def __init__(self, config_entry: config_entries.ConfigEntry) -> None:
         """Initialize options flow."""
@@ -100,6 +104,7 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
             if OPTIONS_CONFIG in config_entry.options
             else {}
         )
+        self._pending_complex_syncs = []
 
     async def async_step_init(
         self, user_input: dict[str, Any] | None = None
@@ -117,10 +122,42 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
     async def async_step_create_sync(
         self, user_input: dict[str, Any] | None = None
     ) -> FlowResult:
-        """Create a hass-to-bemfa sync."""
+        """Create hass-to-bemfa sync(s). Supports multi-select for batch creation."""
         if user_input is not None:
-            self._sync = self._sync_dict[user_input[OPTIONS_SELECT]]
-            return await self._async_step_sync_config()
+            selected_ids = user_input[OPTIONS_SELECT]
+            # Ensure list (single select returns str)
+            if isinstance(selected_ids, str):
+                selected_ids = [selected_ids]
+
+            service = self._get_service()
+            self._is_create = True
+
+            # Separate simple syncs (name-only config) from complex ones
+            simple_syncs: list[Sync] = []
+            complex_syncs: list[Sync] = []
+            for entity_id in selected_ids:
+                sync = self._sync_dict[entity_id]
+                schema = sync.generate_details_schema()
+                # Schema with only OPTIONS_NAME means simple type
+                if len(schema) <= 1:
+                    simple_syncs.append(sync)
+                else:
+                    complex_syncs.append(sync)
+
+            # Batch create simple syncs with default name (entity's HA name)
+            for sync in simple_syncs:
+                await service.async_create_sync(sync, {OPTIONS_NAME: sync.name})
+                if sync.config:
+                    self._config[sync.topic] = sync.config
+
+            # Handle complex syncs that need individual configuration
+            if complex_syncs:
+                self._pending_complex_syncs = complex_syncs[1:]
+                self._sync = complex_syncs[0]
+                return await self._async_step_sync_config()
+
+            # All done (only simple syncs batch created)
+            return self.async_create_entry(title="", data={OPTIONS_CONFIG: self._config})
 
         service = self._get_service()
         all_topics = await service.async_fetch_all_topics()
@@ -133,10 +170,11 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
         if not bool(self._sync_dict):
             return self.async_show_form(step_id="empty", last_step=False)
 
-        self._is_create = True
-
         return self.async_show_form(
             step_id="create_sync",
+            description_placeholders={
+                "hint": "可多选实体批量添加。灯、开关、窗帘、风扇等简单类型将自动以默认名称创建；空调、传感器需逐个配置。"
+            },
             data_schema=vol.Schema(
                 {
                     vol.Required(OPTIONS_SELECT): SelectSelector(
@@ -149,6 +187,7 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
                                 for sync in self._sync_dict.values()
                             ],
                             mode=SelectSelectorMode.LIST,
+                            multiple=True,
                         )
                     )
                 }
@@ -204,9 +243,15 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
         if self._sync.topic in self._config:
             self._sync.config = self._config[self._sync.topic]
 
+        # Show remaining count if there are more complex syncs queued
+        description = None
+        if self._pending_complex_syncs:
+            description = f"还有 {len(self._pending_complex_syncs)} 个实体待配置"
+
         return self.async_show_form(
             step_id=self._sync.get_config_step_id(),
             data_schema=vol.Schema(self._sync.generate_details_schema()),
+            description_placeholders={"hint": description} if description else None,
         )
 
     async def async_step_sync_config_sensor(
@@ -265,6 +310,12 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
             self._config[self._sync.topic] = self._sync.config
         elif self._sync.topic in self._config:
             self._config.pop(self._sync.topic)
+
+        # If there are more complex syncs pending, continue with the next one
+        if self._pending_complex_syncs:
+            self._sync = self._pending_complex_syncs.pop(0)
+            return await self._async_step_sync_config()
+
         return self.async_create_entry(title="", data={OPTIONS_CONFIG: self._config})
 
     async def async_step_destroy_sync(
