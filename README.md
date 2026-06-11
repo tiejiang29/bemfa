@@ -114,9 +114,3 @@
 - **Q: 我有一些开关实际控制的是灯，怎么让语音助手把它们当灯来控制？**
 
   A: 添加实体时，将类型从默认的"开关"手动选择为"灯"即可。这样语音说"关闭所有灯"时，这些开关也会被关闭。已添加的实体也可以在编辑页面修改类型。
-
-## 捐赠
-
-如果此项目对你有帮助，可以扫描下方二维码请我喝杯咖啡 :)
-
-&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; <img src="donate/wechat.png" width="200" title="使用微信扫一扫" /> &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; <img src="donate/alipay.png" width="200" title="使用支付宝扫一扫" />
